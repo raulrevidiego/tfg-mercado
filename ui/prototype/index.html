@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TFG Mercado · prototipo</title>
+<style>
+  :root { --bg:#0d1117; --panel:#151b23; --line:#27303b; --text:#e6edf3; --muted:#9aa6b4;
+          --up:#3fb68b; --down:#e5534b; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
+               font: 14px/1.4 system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; }
+  header { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center;
+           padding: .6rem .9rem; background: var(--panel); border-bottom: 1px solid var(--line); }
+  h1 { font-size: 1rem; margin: 0 .6rem 0 0; }
+  select, button { background: var(--bg); color: var(--text); border: 1px solid var(--line);
+                   border-radius: 6px; padding: .3rem .5rem; font: inherit; }
+  button { cursor: pointer; }
+  button.active { background: var(--text); color: var(--bg); }
+  #ranges { display: flex; gap: .25rem; }
+  #status { color: var(--muted); margin-left: auto; }
+  #layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 270px 1fr; }
+  #watch { border-right: 1px solid var(--line); overflow: auto; background: var(--panel); }
+  #chart { min-width: 0; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: right; color: var(--muted); font-weight: 500; padding: .5rem .6rem; }
+  th:first-child, td:first-child { text-align: left; }
+  td { text-align: right; padding: .5rem .6rem; border-top: 1px solid var(--line); }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover, tbody tr.active { background: #1d2530; }
+  .up { color: var(--up); } .down { color: var(--down); }
+  @media (max-width: 700px) {
+    #layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+    #watch { max-height: 32vh; border-right: 0; border-bottom: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>TFG Mercado</h1>
+  <select id="dataset" aria-label="Serie"></select>
+  <select id="tf" aria-label="Temporalidad de las velas">
+    <option>1m</option><option>5m</option><option>15m</option>
+    <option>1h</option><option>4h</option><option selected>1d</option>
+    <option>1w</option><option>1M</option>
+  </select>
+  <div id="ranges" role="group" aria-label="Rango de fechas visible"></div>
+  <span id="status">cargando…</span>
+</header>
+<div id="layout">
+  <aside id="watch"></aside>
+  <div id="chart"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+const UP = '#3fb68b', DOWN = '#e5534b';
+// Duración de cada temporalidad en minutos: sirve para no ofrecer velas más finas que los datos.
+const MINUTES = { '1m': 1, '5m': 5, '15m': 15, '1h': 60, '4h': 240, '1d': 1440, '1w': 10080, '1M': 43200 };
+// Botones de rango: [etiqueta, días hacia atrás desde la última vela] (null = todo).
+const RANGES = [['1M', 30], ['3M', 91], ['6M', 182], ['1A', 365], ['5A', 1826], ['Todo', null]];
+
+const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+  autoSize: true,
+  layout: { background: { color: '#0d1117' }, textColor: '#c9d1d9' },
+  grid: { vertLines: { color: '#1b222c' }, horzLines: { color: '#1b222c' } },
+  rightPriceScale: { borderColor: '#27303b' },
+  timeScale: { borderColor: '#27303b', timeVisible: true, secondsVisible: false },
+});
+const candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
+  upColor: UP, downColor: DOWN, borderVisible: false, wickUpColor: UP, wickDownColor: DOWN,
+});
+const volumeSeries = chart.addSeries(LightweightCharts.HistogramSeries, {
+  priceFormat: { type: 'volume' }, priceScaleId: 'vol',
+});
+chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+
+const datasetEl = document.getElementById('dataset');
+const tfEl = document.getElementById('tf');
+const rangesEl = document.getElementById('ranges');
+const statusEl = document.getElementById('status');
+const watchEl = document.getElementById('watch');
+let firstTime = 0, lastTime = 0, activeRange = 'Todo';
+
+// --- botones de rango --------------------------------------------------------------
+rangesEl.innerHTML = RANGES.map(([label]) => `<button data-r="${label}">${label}</button>`).join('');
+rangesEl.addEventListener('click', e => {
+  if (e.target.dataset.r) { activeRange = e.target.dataset.r; applyRange(); }
+});
+
+function applyRange() {
+  for (const b of rangesEl.children) b.classList.toggle('active', b.dataset.r === activeRange);
+  const days = RANGES.find(r => r[0] === activeRange)[1];
+  if (days == null || !lastTime) { chart.timeScale().fitContent(); return; }
+  const from = Math.max(firstTime, lastTime - days * 86400);
+  if (from >= lastTime) { chart.timeScale().fitContent(); return; }
+  chart.timeScale().setVisibleRange({ from, to: lastTime });
+}
+
+// --- temporalidad ------------------------------------------------------------------
+function syncTimeframes() {
+  const interval = datasetEl.value.split('|')[2];
+  const base = MINUTES[interval] || 1;
+  for (const opt of tfEl.options) opt.disabled = MINUTES[opt.value] < base;
+  if (MINUTES[tfEl.value] < base) tfEl.value = interval;
+}
+
+// --- datos -------------------------------------------------------------------------
+async function loadDatasets() {
+  const sets = await (await fetch('/api/datasets')).json();
+  if (!sets.length) { statusEl.textContent = 'No hay datos: ejecuta el ingestor'; return false; }
+  datasetEl.innerHTML = sets
+    .map(s => `<option value="${s.source}|${s.symbol}|${s.interval}">${s.symbol} · ${s.interval} · ${s.source}</option>`)
+    .join('');
+  return true;
+}
+
+async function loadCandles() {
+  const [source, symbol, interval] = datasetEl.value.split('|');
+  syncTimeframes();
+  chart.applyOptions({ timeScale: { timeVisible: MINUTES[tfEl.value] < 1440 } });
+  statusEl.textContent = 'cargando…';
+  const url = `/api/candles?source=${source}&symbol=${symbol}&interval=${interval}&tf=${tfEl.value}&limit=5000`;
+  const res = await fetch(url);
+  if (!res.ok) { statusEl.textContent = (await res.json()).detail; return; }
+  const data = await res.json();
+  candleSeries.setData(data.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
+  volumeSeries.setData(data.map(d => ({
+    time: d.time, value: d.volume, color: d.close >= d.open ? UP + '66' : DOWN + '66',
+  })));
+  firstTime = data[0].time;
+  lastTime = data[data.length - 1].time;
+  applyRange();
+  statusEl.textContent = `${data.length} velas · último cierre ${data[data.length - 1].close.toLocaleString('es-ES')}`;
+  markActiveRow(symbol);
+}
+
+// --- lista de seguimiento ----------------------------------------------------------
+const pct = v => v == null ? '–'
+  : `<span class="${v >= 0 ? 'up' : 'down'}">${v >= 0 ? '+' : ''}${v.toFixed(2).replace('.', ',')} %</span>`;
+
+async function loadWatchlist() {
+  const rows = await (await fetch('/api/watchlist')).json();
+  if (!rows.length) { watchEl.innerHTML = ''; return; }
+  watchEl.innerHTML = `<table><thead><tr><th>Acción</th><th>Cierre</th><th>1D</th><th>1M</th></tr></thead><tbody>` +
+    rows.map(r => `<tr data-s="${r.symbol}"><td><b>${r.symbol}</b></td>` +
+      `<td>${r.close.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>` +
+      `<td>${pct(r.change_1d)}</td><td>${pct(r.change_1m)}</td></tr>`).join('') +
+    `</tbody></table>`;
+}
+
+function markActiveRow(symbol) {
+  for (const tr of watchEl.querySelectorAll('tbody tr')) tr.classList.toggle('active', tr.dataset.s === symbol);
+}
+
+watchEl.addEventListener('click', e => {
+  const tr = e.target.closest('tr[data-s]');
+  if (!tr) return;
+  datasetEl.value = `alpaca_stocks|${tr.dataset.s}|1d`;
+  tfEl.value = '1d';
+  loadCandles();
+});
+
+datasetEl.addEventListener('change', loadCandles);
+tfEl.addEventListener('change', loadCandles);
+loadDatasets().then(async ok => { if (ok) { await loadWatchlist(); loadCandles(); } });
+</script>
+</body>
+</html>

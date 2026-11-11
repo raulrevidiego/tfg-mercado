@@ -1,0 +1,4 @@
+# Plantilla de eventos. Copia este archivo a data/events/events.csv y escribe tus eventos reales.
+# datetime: ISO 8601 con zona horaria (Z = UTC). Sin zona horaria se entiende hora de Nueva York.
+# category: la etiqueta que quieras (positivo, negativo, neutral, producto...).
+symbol,datetime,category,source,note
