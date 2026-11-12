@@ -6,7 +6,7 @@ __pycache__/
 # Claves de API (nunca subir)
 .env
 # Datos (se regeneran con los ingestores)
-data/
+/data/
 # C++
 build/
 # UI
