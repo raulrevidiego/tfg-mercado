@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>¿Y si…? · TFG Mercado</title>
+<style>
+  :root { --bg:#0d1117; --panel:#151b23; --line:#27303b; --text:#e6edf3; --muted:#9aa6b4; --up:#3fb68b; --down:#e5534b; --accent:#6aa8f5; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; padding: .6rem .9rem;
+           background: var(--panel); border-bottom: 1px solid var(--line); }
+  h1 { font-size: 1rem; margin: 0 .6rem 0 0; } a { color: var(--accent); }
+  main { max-width: 52rem; margin: 0 auto; padding: 1rem; }
+  .form { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: .6rem; margin-bottom: 1rem; }
+  label { display: grid; gap: .2rem; color: var(--muted); font-size: .85rem; }
+  select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: .4rem; font: inherit; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: .8rem 1rem; margin-bottom: .8rem; }
+  h2 { font-size: .95rem; margin: 0 0 .5rem; }
+  .bar { display: flex; align-items: center; gap: .6rem; margin: .25rem 0; }
+  .bar span:first-child { width: 14rem; color: var(--muted); font-size: .85rem; }
+  .bar i { display: block; height: .8rem; border-radius: 4px; background: var(--accent); min-width: 2px; }
+  .bar i.normal { background: var(--muted); }
+  .muted { color: var(--muted); } .up { color: var(--up); } .down { color: var(--down); }
+  ul { margin: .3rem 0 0; padding-left: 1.2rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<header><h1>¿Y si…?</h1><a href="index.html">← Gráficos</a></header>
+<main>
+  <p class="muted">Elige una acción y un tipo de evento. Verás qué ha pasado en la historia tras eventos como ese, frente a un día normal.
+  Describe el pasado: no es una predicción ni asesoramiento financiero.</p>
+  <div class="form">
+    <label>Acción<select id="symbol"></select></label>
+    <label>Tipo de evento<select id="category"></select></label>
+    <label>Tono<select id="tone"><option value="any">cualquiera</option><option value="positivo">positivo</option><option value="negativo">negativo</option><option value="neutro">neutro</option></select></label>
+    <label>Alcance<select id="scope"><option value="symbol">solo esta acción</option><option value="all">todas las acciones</option></select></label>
+  </div>
+  <div id="result"></div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const pct = (v, d = 1) => v == null ? '–' : (v * 100).toFixed(d).replace('.', ',') + ' %';
+const signed = v => (v >= 0 ? '+' : '') + pct(v);
+
+async function init() {
+  const res = await fetch('/api/whatif/options');
+  if (!res.ok) { $('result').innerHTML = `<section>${(await res.json()).detail}</section>`; return; }
+  const o = await res.json();
+  $('symbol').innerHTML = o.symbols.map(s => `<option>${s}</option>`).join('');
+  $('category').innerHTML = Object.entries(o.categories).map(([c, n]) => `<option value="${c}">${c} (${n})</option>`).join('');
+  $('tone').disabled = !o.has_tone;
+  for (const id of ['symbol', 'category', 'tone', 'scope']) $(id).addEventListener('change', run);
+  run();
+}
+
+async function run() {
+  const q = new URLSearchParams({ symbol: $('symbol').value, category: $('category').value, tone: $('tone').value, scope: $('scope').value });
+  const res = await fetch('/api/whatif?' + q);
+  if (!res.ok) { $('result').innerHTML = `<section>${(await res.json()).detail}</section>`; return; }
+  render(await res.json());
+}
+
+function bar(label, value, max, cls = '') {
+  return `<div class="bar"><span>${label}</span><i class="${cls}" style="width:${Math.max(2, 60 * value / max)}%"></i><b>${pct(value)}</b></div>`;
+}
+
+function render(r) {
+  const warn = r.warnings.length ? `<ul>${r.warnings.map(w => `<li>${w}</li>`).join('')}</ul>` : '';
+  if (!r.n) { $('result').innerHTML = `<section><h2>${r.symbol} · ${r.category}</h2>${warn}</section>`; return; }
+  const max = Math.max(r.reaction.p90_abs, r.reaction.normal_median_abs || 0);
+  const d = r.direction;
+  $('result').innerHTML = `
+    <section><h2>${r.symbol} · ${r.category}${r.tone !== 'any' ? ' · tono ' + r.tone : ''} — ${r.n} eventos en la historia</h2>${warn}</section>
+    <section><h2>¿Cuánto se mueve?</h2>
+      <p class="muted">Reacción de la acción que el mercado no explica, el día del evento y el siguiente (sin importar el signo).</p>
+      ${bar('Un día normal (mediana)', r.reaction.normal_median_abs || 0, max, 'normal')}
+      ${bar('Tras el evento (mediana)', r.reaction.median_abs, max)}
+      ${bar('Tras el evento (1 de cada 10 casos, o más)', r.reaction.p90_abs, max)}
+    </section>
+    <section><h2>¿Hacia dónde?</h2>
+      <p>Subió en el <b>${(d.share_up * 100).toFixed(0)} %</b> de los casos. Reacción media: <b class="${d.mean >= 0 ? 'up' : 'down'}">${signed(d.mean)}</b>${d.margin == null ? '' : ' ± ' + pct(d.margin)}.</p>
+      <p class="muted">${d.distinguishable ? 'La dirección media se distingue del azar.' : 'La dirección media no se distingue de cero con estos datos.'}</p>
+    </section>
+    <section><h2>Rango del día (máximo menos mínimo)</h2>
+      <p>Suele ser <b>×${r.range.median_multiplier.toFixed(2).replace('.', ',')}</b> lo previsto (1 de cada 10 veces, ×${r.range.p90_multiplier.toFixed(2).replace('.', ',')} o más).</p>
+      ${r.baseline_range == null ? '' : `<p>Rango normal previsto para la próxima sesión: <b>${pct(r.baseline_range)}</b>. Si hubiera un evento así: <b>${pct(r.expected_range_event)}</b> aproximadamente.</p>`}
+    </section>`;
+}
+init();
+</script>
+</body>
+</html>

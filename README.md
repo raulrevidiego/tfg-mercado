@@ -140,3 +140,26 @@ de cada comunicado con el de los anteriores de la misma empresa.
 Si `check_gpu` dice que tu GPU es demasiado antigua (por ejemplo una MX250, capacidad 6.1), no es un fallo:
 las ruedas actuales de PyTorch solo traen kernels desde la capacidad 7.5 (serie RTX 20 en adelante).
 En ese equipo se trabaja con la CPU; las RTX 30, 40 y 50 sí están cubiertas.
+
+## Pantalla "¿Y si…?"
+
+```bash
+python -m backend.events.build_reactions        # una fila por evento + fechas al azar de referencia
+uvicorn backend.api.main:app --reload           # y abre http://127.0.0.1:8000/whatif.html
+```
+
+Muestra, para una acción y un tipo de evento (y un tono, si has descargado los textos), cuánto se ha movido
+la acción en la historia frente a un día normal, hacia dónde y con qué incertidumbre. Describe el pasado: no
+es una predicción. Hay que volver a ejecutar `build_reactions` cuando cambien los eventos o los textos.
+
+## Red neuronal de volatilidad (paso 16)
+
+```bash
+python -m backend.training.evaluate_nn                  # perceptrón multicapa, 3 semillas, usa la GPU si la ve
+python -m backend.training.evaluate_nn --arch gru       # red recurrente
+python -m backend.training.evaluate_nn --device cpu     # forzar CPU
+```
+
+Compara la red con `har_enext` (HAR + "mañana hay resultados") en cada acción y, en conjunto, en la víspera de
+resultados, el día de resultados y el resto de días. Guarda las predicciones en `data/models/nn_predictions.parquet`.
+Los tests de PyTorch se ejecutan solos si PyTorch está instalado (`pytest tests/test_nn_vol.py`).

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections import Counter
 from pathlib import Path
 
 import polars as pl
@@ -19,6 +20,15 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 
 from backend.data.common import INTERVAL_MS
+from backend.data.store import load_series
+from backend.events.reactions import load_reactions, what_if
+from backend.models.volatility import forecast_vol_frame
+from backend.data.store import load_series
+from backend.events.reactions import load_reactions, what_if
+from backend.models.volatility import forecast_vol_frame
+from backend.data.store import load_series
+from backend.events.reactions import load_reactions, what_if
+from backend.models.volatility import forecast_vol_frame
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 UI_DIR = REPO_ROOT / "ui" / "prototype"
@@ -137,6 +147,183 @@ def watchlist(source: str = "alpaca_stocks") -> list[dict]:
             "change_1m": change(21),
         })
     return rows
+
+
+# ------------------------------------------------------------------ pantalla "¿y si...?"
+
+CATEGORY_RE = re.compile(r"^[a-z0-9_]{1,30}$")
+_BASELINE_CACHE: dict[tuple, float | None] = {}
+
+
+def data_root() -> Path:
+    return Path(os.environ.get("TFG_DATA_DIR", REPO_ROOT / "data"))
+
+
+def _reactions() -> list[dict]:
+    path = data_root() / "events" / "reactions.csv"
+    if not path.exists():
+        raise HTTPException(404, "No hay tabla de reacciones: ejecuta python -m backend.events.build_reactions")
+    return load_reactions(path)
+
+
+def _baseline_range(symbol: str) -> float | None:
+    """Rango diario que el HAR espera para la próxima sesión (sin evento). None si no hay datos."""
+    path = data_root() / "parquet" / "alpaca_stocks" / f"{symbol}_1d.parquet"
+    if not path.exists():
+        return None
+    key = (str(path), path.stat().st_mtime)
+    if key not in _BASELINE_CACHE:
+        try:
+            last = forecast_vol_frame(load_series(symbol, data_dir=data_root()))["har"][-1]
+        except ValueError:
+            last = None
+        _BASELINE_CACHE[key] = last
+    return _BASELINE_CACHE[key]
+
+
+@app.get("/api/whatif/options")
+def whatif_options() -> dict:
+    """Qué se puede consultar: acciones, categorías (con su número de eventos) y si hay datos de tono."""
+    events = [r for r in _reactions() if r["kind"] == "evento"]
+    return {
+        "symbols": sorted({r["symbol"] for r in events}),
+        "categories": dict(Counter(r["category"] for r in events)),
+        "has_tone": any(r["tone_rel"] is not None for r in events),
+    }
+
+
+@app.get("/api/whatif")
+def whatif(symbol: str = "NVDA", category: str = "resultados", tone: str = "any", scope: str = "symbol") -> dict:
+    """Qué ha pasado en la historia tras eventos de este tipo, y qué rango cabe esperar si ocurre uno."""
+    symbol = symbol.upper()
+    if not SYMBOL_RE.match(symbol) or not CATEGORY_RE.match(category):
+        raise HTTPException(400, "Símbolo o categoría no válidos")
+    if tone not in {"any", "positivo", "negativo", "neutro"} or scope not in {"symbol", "all"}:
+        raise HTTPException(400, "tone: any, positivo, negativo o neutro; scope: symbol o all")
+    result = what_if(_reactions(), symbol, category, tone, scope)
+    baseline = _baseline_range(symbol) if scope == "symbol" else None
+    result["baseline_range"] = baseline
+    if baseline is not None and "range" in result:
+        result["expected_range_event"] = baseline * result["range"]["median_multiplier"]
+    return result
+
+
+# ------------------------------------------------------------------ pantalla "¿y si...?"
+
+CATEGORY_RE = re.compile(r"^[a-z0-9_]{1,30}$")
+_BASELINE_CACHE: dict[tuple, float | None] = {}
+
+
+def data_root() -> Path:
+    return Path(os.environ.get("TFG_DATA_DIR", REPO_ROOT / "data"))
+
+
+def _reactions() -> list[dict]:
+    path = data_root() / "events" / "reactions.csv"
+    if not path.exists():
+        raise HTTPException(404, "No hay tabla de reacciones: ejecuta python -m backend.events.build_reactions")
+    return load_reactions(path)
+
+
+def _baseline_range(symbol: str) -> float | None:
+    """Rango diario que el HAR espera para la próxima sesión (sin evento). None si no hay datos."""
+    path = data_root() / "parquet" / "alpaca_stocks" / f"{symbol}_1d.parquet"
+    if not path.exists():
+        return None
+    key = (str(path), path.stat().st_mtime)
+    if key not in _BASELINE_CACHE:
+        try:
+            last = forecast_vol_frame(load_series(symbol, data_dir=data_root()))["har"][-1]
+        except ValueError:
+            last = None
+        _BASELINE_CACHE[key] = last
+    return _BASELINE_CACHE[key]
+
+
+@app.get("/api/whatif/options")
+def whatif_options() -> dict:
+    """Qué se puede consultar: acciones, categorías (con su número de eventos) y si hay datos de tono."""
+    events = [r for r in _reactions() if r["kind"] == "evento"]
+    return {
+        "symbols": sorted({r["symbol"] for r in events}),
+        "categories": dict(Counter(r["category"] for r in events)),
+        "has_tone": any(r["tone_rel"] is not None for r in events),
+    }
+
+
+@app.get("/api/whatif")
+def whatif(symbol: str = "NVDA", category: str = "resultados", tone: str = "any", scope: str = "symbol") -> dict:
+    """Qué ha pasado en la historia tras eventos de este tipo, y qué rango cabe esperar si ocurre uno."""
+    symbol = symbol.upper()
+    if not SYMBOL_RE.match(symbol) or not CATEGORY_RE.match(category):
+        raise HTTPException(400, "Símbolo o categoría no válidos")
+    if tone not in {"any", "positivo", "negativo", "neutro"} or scope not in {"symbol", "all"}:
+        raise HTTPException(400, "tone: any, positivo, negativo o neutro; scope: symbol o all")
+    result = what_if(_reactions(), symbol, category, tone, scope)
+    baseline = _baseline_range(symbol) if scope == "symbol" else None
+    result["baseline_range"] = baseline
+    if baseline is not None and "range" in result:
+        result["expected_range_event"] = baseline * result["range"]["median_multiplier"]
+    return result
+
+
+# ------------------------------------------------------------------ pantalla "¿y si...?"
+
+CATEGORY_RE = re.compile(r"^[a-z0-9_]{1,30}$")
+_BASELINE_CACHE: dict[tuple, float | None] = {}
+
+
+def data_root() -> Path:
+    return Path(os.environ.get("TFG_DATA_DIR", REPO_ROOT / "data"))
+
+
+def _reactions() -> list[dict]:
+    path = data_root() / "events" / "reactions.csv"
+    if not path.exists():
+        raise HTTPException(404, "No hay tabla de reacciones: ejecuta python -m backend.events.build_reactions")
+    return load_reactions(path)
+
+
+def _baseline_range(symbol: str) -> float | None:
+    """Rango diario que el HAR espera para la próxima sesión (sin evento). None si no hay datos."""
+    path = data_root() / "parquet" / "alpaca_stocks" / f"{symbol}_1d.parquet"
+    if not path.exists():
+        return None
+    key = (str(path), path.stat().st_mtime)
+    if key not in _BASELINE_CACHE:
+        try:
+            last = forecast_vol_frame(load_series(symbol, data_dir=data_root()))["har"][-1]
+        except ValueError:
+            last = None
+        _BASELINE_CACHE[key] = last
+    return _BASELINE_CACHE[key]
+
+
+@app.get("/api/whatif/options")
+def whatif_options() -> dict:
+    """Qué se puede consultar: acciones, categorías (con su número de eventos) y si hay datos de tono."""
+    events = [r for r in _reactions() if r["kind"] == "evento"]
+    return {
+        "symbols": sorted({r["symbol"] for r in events}),
+        "categories": dict(Counter(r["category"] for r in events)),
+        "has_tone": any(r["tone_rel"] is not None for r in events),
+    }
+
+
+@app.get("/api/whatif")
+def whatif(symbol: str = "NVDA", category: str = "resultados", tone: str = "any", scope: str = "symbol") -> dict:
+    """Qué ha pasado en la historia tras eventos de este tipo, y qué rango cabe esperar si ocurre uno."""
+    symbol = symbol.upper()
+    if not SYMBOL_RE.match(symbol) or not CATEGORY_RE.match(category):
+        raise HTTPException(400, "Símbolo o categoría no válidos")
+    if tone not in {"any", "positivo", "negativo", "neutro"} or scope not in {"symbol", "all"}:
+        raise HTTPException(400, "tone: any, positivo, negativo o neutro; scope: symbol o all")
+    result = what_if(_reactions(), symbol, category, tone, scope)
+    baseline = _baseline_range(symbol) if scope == "symbol" else None
+    result["baseline_range"] = baseline
+    if baseline is not None and "range" in result:
+        result["expected_range_event"] = baseline * result["range"]["median_multiplier"]
+    return result
 
 
 # La interfaz se monta la última: así /api/... tiene prioridad sobre los archivos estáticos.
