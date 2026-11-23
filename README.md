@@ -163,3 +163,21 @@ python -m backend.training.evaluate_nn --device cpu     # forzar CPU
 Compara la red con `har_enext` (HAR + "mañana hay resultados") en cada acción y, en conjunto, en la víspera de
 resultados, el día de resultados y el resto de días. Guarda las predicciones en `data/models/nn_predictions.parquet`.
 Los tests de PyTorch se ejecutan solos si PyTorch está instalado (`pytest tests/test_nn_vol.py`).
+
+## Núcleo en C++ (paso 17)
+
+El test de permutaciones del estudio de eventos (el que da los p) tiene una versión en C++ con pybind11 (`core/permutation.cpp`),
+multihilo y unas 50 veces más rápida por remuestreo que la de Python en una prueba con 1 hilo. Es opcional: sin compilar, todo usa Python.
+
+```bash
+pip install -e ".[core]"                       # pybind11 y setuptools (hace falta un compilador: g++ o clang++)
+python core/build.py                           # deja backend/_core*.so junto al código Python
+pytest tests/test_fastperm.py                  # los tests de C++ se saltan solos si no está compilado
+python -m backend.events.benchmark_core        # compara Python y C++ (1 hilo y todos los hilos)
+python -m backend.events.evaluate_events --events data/events/edgar_8k.csv --motor cpp --draws 200000
+```
+
+- `--motor python` (por defecto) conserva los números de siempre; `cpp` usa el núcleo; `auto` usa C++ si está compilado.
+- Python y C++ usan generadores aleatorios distintos: con la misma semilla los p difieren solo por el ruido del Monte Carlo
+  (≈ √(p(1−p)/remuestreos)). Dentro de C++ el resultado es idéntico con 1 hilo que con 16.
+- Si cambias de versión de Python, vuelve a ejecutar `python core/build.py` (el `.so` es específico de cada versión).

@@ -84,7 +84,7 @@ def run_events(args: argparse.Namespace) -> None:
     for sym, data in cache.items():
         mine = [r["idx"] for r in analyzed if r["symbol"] == sym]
         pools[sym] = [p["car1"] for p in placebo_pool(data, args.placebo_n, mine, args.seed)]
-    rows = summarize([r for r in kept if pools.get(r["symbol"])], pools, args.draws, args.seed)
+    rows = summarize([r for r in kept if pools.get(r["symbol"])], pools, args.draws, args.seed, args.motor)
 
     print("\nResumen por categoría. CAR = retorno que el mercado (SPY) no explica, día del evento + siguiente.")
     print("  CAR medio: con signo, margen de error 95 % y p frente a fechas al azar.")
@@ -154,6 +154,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--placebo-n", type=int, default=300, help="fechas al azar por acción")
     p.add_argument("--draws", type=int, default=5000, help="remuestreos del test de permutaciones")
     p.add_argument("--seed", type=int, default=7)
+    p.add_argument(
+        "--motor", choices=["python", "cpp", "auto"], default="python",
+        help="motor del test de permutaciones: python (por defecto), cpp (núcleo C++, ver README) o auto",
+    )
     p.add_argument("--data-dir", type=Path, default=Path("data"))
     args = p.parse_args(argv)
     (run_placebo if args.placebo else run_events)(args)

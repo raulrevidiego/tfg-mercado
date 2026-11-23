@@ -159,8 +159,29 @@ def select_independent_events(
     return kept, len(events) - len(by_day), len(by_day) - len(kept)
 
 
-def summarize(results: list[dict], pools: dict[str, list[float]], draws: int = 5000, seed: int = 7) -> list[dict]:
-    """Resumen por categoría de los eventos analizados (cada `result` lleva symbol y category)."""
+def summarize(
+    results: list[dict], pools: dict[str, list[float]], draws: int = 5000, seed: int = 7,
+    engine: str = "python", threads: int = 0,
+) -> list[dict]:
+    """Resumen por categoría de los eventos analizados (cada `result` lleva symbol y category).
+
+    `engine`: "python" (por defecto, mismos números de siempre), "cpp" (núcleo C++ multihilo) o "auto".
+    """
+    if engine == "python":
+        def signed_p(mean: float, symbols: list[str]) -> float:
+            return permutation_pvalue(mean, symbols, pools, draws, seed)
+
+        def magnitude_p(mean_abs: float, symbols: list[str]) -> float:
+            return magnitude_pvalue(mean_abs, symbols, pools, draws, seed)
+    else:
+        from backend.events import fastperm  # import aquí para evitar un ciclo (fastperm importa study)
+
+        def signed_p(mean: float, symbols: list[str]) -> float:
+            return fastperm.permutation_pvalue(mean, symbols, pools, draws, seed, engine, threads)
+
+        def magnitude_p(mean_abs: float, symbols: list[str]) -> float:
+            return fastperm.magnitude_pvalue(mean_abs, symbols, pools, draws, seed, engine, threads)
+
     rows = []
     for cat in sorted({r["category"] for r in results}):
         group = [r for r in results if r["category"] == cat]
@@ -174,10 +195,10 @@ def summarize(results: list[dict], pools: dict[str, list[float]], draws: int = 5
         rows.append({
             "category": cat, "n": n, "mean_car1": mean,
             "mean_abs_car1": mean_abs, "expected_abs": expected_abs,
-            "p_abs": magnitude_pvalue(mean_abs, symbols, pools, draws, seed),
+            "p_abs": magnitude_p(mean_abs, symbols),
             "margin": 1.96 * sd / math.sqrt(n) if sd is not None else None,
             "share_pos": sum(c > 0 for c in cars) / n,
             "mean_abn_range": sum(r["abn_range"] for r in group) / n,
-            "p": permutation_pvalue(mean, [r["symbol"] for r in group], pools, draws, seed),
+            "p": signed_p(mean, symbols),
         })
     return rows

@@ -22,7 +22,6 @@ import statistics
 import sys
 import time
 from datetime import timezone
-from datetime import timezone
 from html.parser import HTMLParser
 from pathlib import Path
 

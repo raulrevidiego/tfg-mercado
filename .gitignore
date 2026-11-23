@@ -9,6 +9,8 @@ __pycache__/
 /data/
 # C++
 build/
+*.so
+*.pyd
 # UI
 node_modules/
 dist/
