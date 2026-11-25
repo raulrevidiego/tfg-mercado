@@ -97,6 +97,14 @@ def run_events(args: argparse.Namespace) -> None:
             f"(azar {_pct(s['expected_abs']):.2f} %, p = {s['p_abs']:.4f})   rango ×{s['mean_abn_range']:.2f}"
         )
 
+    if args.robustez:
+        from backend.events.robustness import format_robustness, robustness
+
+        threshold = 0.05 / (2 * max(len(rows), 1))
+        usable = [r for r in kept if pools.get(r["symbol"])]
+        report = robustness(usable, pools, args.draws, args.seed, args.motor, threshold=threshold)
+        print(format_robustness(report, threshold, args.draws))
+
     shown = kept if args.detalle else sorted(kept, key=lambda r: -abs(r["car1"]))[: args.top]
     shown = sorted(shown, key=lambda r: (r["session"], r["symbol"]))
     print(f"\n{'Todos los eventos independientes' if args.detalle else f'Los {len(shown)} con mayor reacción'}")
@@ -154,6 +162,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--placebo-n", type=int, default=300, help="fechas al azar por acción")
     p.add_argument("--draws", type=int, default=5000, help="remuestreos del test de permutaciones")
     p.add_argument("--seed", type=int, default=7)
+    p.add_argument("--robustez", action="store_true",
+                   help="repite el contraste de magnitud por acción, sin cada acción y sin los mayores (ver README)")
     p.add_argument(
         "--motor", choices=["python", "cpp", "auto"], default="python",
         help="motor del test de permutaciones: python (por defecto), cpp (núcleo C++, ver README) o auto",

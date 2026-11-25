@@ -4,8 +4,8 @@ Compara `nn` con `har_enext` (el mejor modelo clásico hasta ahora: HAR + "maña
 la referencia, y con `har`. Necesita PyTorch (en la GPU va mucho más rápido) y el CSV de eventos de EDGAR.
 
 Uso desde la raíz del repo:
-
-    python -m backend.training.evaluate_nn                 # perceptrón multicapa, 3 semillas
+    python -m backend.training.evaluate_nn 
+                    # perceptrón multicapa, 3 semillas
     python -m backend.training.evaluate_nn --arch gru      # red recurrente
 """
 

@@ -181,3 +181,48 @@ python -m backend.events.evaluate_events --events data/events/edgar_8k.csv --mot
 - Python y C++ usan generadores aleatorios distintos: con la misma semilla los p difieren solo por el ruido del Monte Carlo
   (≈ √(p(1−p)/remuestreos)). Dentro de C++ el resultado es idéntico con 1 hilo que con 16.
 - Si cambias de versión de Python, vuelve a ejecutar `python core/build.py` (el `.so` es específico de cada versión).
+
+## Tono con FinBERT y citas del CEO (paso 18)
+
+`evaluate_tone` admite ahora dos variantes más del tono, sobre los mismos eventos que el baseline de lexicón:
+
+- `--metodo finbert`: FinBERT (modelo `ProsusAI/finbert`, gratuito, ~440 MB la primera vez) puntúa cada frase en
+  positiva/negativa/neutra; el tono del comunicado es la media de P(positiva) − P(negativa). Usa el contexto de la frase, no solo
+  palabras sueltas como el lexicón, pero no es infalible (p. ej. puntúa como negativa "costs fell sharply while margins reached a record high").
+- `--parte quotes`: solo lo que va entre comillas, que en un comunicado de resultados son las palabras del CEO.
+
+```bash
+pip install -e ".[nlp]"                        # transformers (PyTorch ya lo tienes)
+python -m backend.events.tone_finbert          # comprueba que el modelo funciona con 4 frases de ejemplo
+python -m backend.events.evaluate_tone --metodo lexicon --parte all    --variantes 4   # baseline (ya ejecutado)
+python -m backend.events.evaluate_tone --metodo lexicon --parte quotes --variantes 4
+python -m backend.events.evaluate_tone --metodo finbert --parte all    --variantes 4
+python -m backend.events.evaluate_tone --metodo finbert --parte quotes --variantes 4
+TFG_TEST_FINBERT=1 pytest tests/test_tone_finbert.py   # opcional: prueba el modelo real (descarga)
+```
+
+- **Se informan las cuatro variantes, también las que no salgan bien.** `--variantes 4` ajusta el umbral de Bonferroni a
+  4 contrastes × 4 variantes = 16 (p < 0,0031). Probar variantes hasta que una dé p < 0,05 sin ajustar sería p-hacking.
+- Con unos 100 comunicados una correlación necesita rondar ±0,20 para distinguirse del azar: lo esperable es que ninguna
+  variante supere el umbral, y eso también es un resultado (con su margen de error) para la memoria.
+- Los tests normales no descargan el modelo: usan un puntuador de mentira. Con `--parte quotes`, `evaluate_tone` indica
+  cuántos comunicados se omiten por no traer citas.
+
+## Robustez del estudio de eventos (paso 19)
+
+Un p muy pequeño sobre todos los eventos de una categoría puede venir de una sola acción o de unos pocos eventos enormes.
+`--robustez` repite el contraste de magnitud (|CAR| frente a fechas al azar) para cada categoría que supera el umbral de Bonferroni:
+
+- **solo cada acción**: el cociente |CAR| real / |CAR| del azar debería salir > 1 en todas (con pocos eventos por acción, el p de cada una es poco potente);
+- **sin cada acción**: si la categoría depende de una sola acción, el p se estropea al quitarla;
+- **sin los 3 mayores**: prueba conservadora (se quitan de los eventos reales, no de las fechas al azar); si aun así aguanta, es sólida.
+
+```bash
+python -m backend.events.evaluate_events --events data/events/edgar_8k.csv --motor cpp --draws 200000 --robustez
+pytest tests/test_robustness.py
+```
+
+El veredicto es mecánico (convenciones, no una regla estadística): **frágil** = quitando una acción o los 3 mayores el p deja de pasar el umbral;
+**robusta con excepciones** = aguanta, pero hay acciones sin efecto (con 3 o más eventos, cociente < 1,1; con 10 o más, además, p ≥ 0,05 en solitario);
+**robusta** = aguanta y sin excepciones.
+Con `--motor python` y 200.000 remuestreos tarda mucho (unas 10 permutaciones por categoría): usa `--motor cpp`.

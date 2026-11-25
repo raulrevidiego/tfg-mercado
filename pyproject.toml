@@ -18,6 +18,8 @@ dependencies = [
 dev = ["pytest>=8"]
 # núcleo C++ (opcional): pip install -e ".[core]" && python core/build.py
 core = ["pybind11>=3.0", "setuptools>=68"]
+# tono con FinBERT (opcional; además de PyTorch): pip install -e ".[nlp]"
+nlp = ["transformers>=4.40"]
 
 [tool.setuptools.packages.find]
 include = ["backend*"]

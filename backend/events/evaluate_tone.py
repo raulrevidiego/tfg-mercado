@@ -26,7 +26,8 @@ from pathlib import Path
 from backend.data.store import load_series
 from backend.events.study import analyze_event, prepare
 from backend.events.table import first_affected_session, load_events
-from backend.events.tone import relative_tone, tone_score
+from backend.events.tone import relative_tone
+from backend.events.tone_finbert import MODEL, METHODS, PARTS, make_tone_fn
 from backend.training.metrics import proportion_margin
 
 MARKET = "SPY"
@@ -80,8 +81,9 @@ def tercile_gap(x: list[float], y: list[float]) -> float:
     return sum(y[i] for i in high) / k - sum(y[i] for i in low) / k
 
 
-def load_records(args: argparse.Namespace) -> list[dict]:
-    """Un registro por evento con reacción (car1) y tono (tone, tone_rel)."""
+def load_records(args: argparse.Namespace) -> tuple[list[dict], int]:
+    """Un registro por evento con reacción (car1) y tono (score, tone_rel), y cuántos se omitieron por no
+    tener la parte pedida del texto (p. ej. comunicados sin citas con --parte quotes)."""
     events_path = args.events or args.data_dir / "events" / "edgar_8k.csv"
     index_path = args.data_dir / "events" / "texts_index.csv"
     for path, how in ((events_path, "python -m backend.data.edgar"), (index_path, "python -m backend.data.edgar_text")):
@@ -90,6 +92,11 @@ def load_records(args: argparse.Namespace) -> list[dict]:
     with index_path.open(encoding="utf-8") as fh:
         texts = {(r["symbol"], r["datetime"]): Path(r["path"]) for r in csv.DictReader(fh)}
 
+    try:
+        tone_fn = make_tone_fn(args.metodo, args.parte, args.modelo, args.device)
+    except RuntimeError as exc:  # p. ej. falta transformers
+        raise SystemExit(f"\n{exc}") from None
+    no_part = 0
     market = load_series(MARKET, data_dir=args.data_dir)
     cache: dict[str, dict] = {}
     by_symbol: dict[str, list[dict]] = {}
@@ -104,16 +111,19 @@ def load_records(args: argparse.Namespace) -> list[dict]:
         res = analyze_event(data, data["session"].index(session)) if session else None
         if res is None:
             continue
-        body = texts[key].read_text(encoding="utf-8").partition("\n")[2]
+        tone = tone_fn(texts[key].read_text(encoding="utf-8").partition("\n")[2])
+        if tone is None:  # el comunicado no tiene la parte pedida (p. ej. no hay citas del CEO)
+            no_part += 1
+            continue
         by_symbol.setdefault(ev.symbol, []).append({
-            "symbol": ev.symbol, "session": session, "car1": res["car1"], **tone_score(body),
+            "symbol": ev.symbol, "session": session, "car1": res["car1"], **tone,
         })
     records = []
     for recs in by_symbol.values():
         for rec, rel in zip(recs, relative_tone([r["score"] for r in recs])):
             rec["tone_rel"] = rel
             records.append(rec)
-    return [r for r in records if r["tone_rel"] is not None]
+    return [r for r in records if r["tone_rel"] is not None], no_part
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -122,11 +132,18 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--category", default="resultados")
     p.add_argument("--draws", type=int, default=5000)
     p.add_argument("--data-dir", type=Path, default=Path("data"))
+    p.add_argument("--metodo", choices=METHODS, default="lexicon", help="lexicon (baseline) o finbert")
+    p.add_argument("--parte", choices=PARTS, default="all", help="all: todo el comunicado; quotes: solo las citas")
+    p.add_argument("--variantes", type=int, default=1,
+                   help="cuántas variantes de tono (método × parte) has probado EN TOTAL; ajusta Bonferroni")
+    p.add_argument("--modelo", default=MODEL, help="modelo de Hugging Face para --metodo finbert")
+    p.add_argument("--device", default="auto", help="auto, cuda o cpu (solo para finbert)")
     args = p.parse_args(argv)
 
-    recs = load_records(args)
+    recs, no_part = load_records(args)
     if len(recs) < 20:
-        raise SystemExit(f"\nSolo {len(recs)} eventos con texto y tono: hacen falta al menos 20.")
+        hint = f" ({no_part} comunicados sin citas entre comillas)" if args.parte == "quotes" else ""
+        raise SystemExit(f"\nSolo {len(recs)} eventos con texto y tono{hint}: hacen falta al menos 20.")
     tone = [r["tone_rel"] for r in recs]
     car = [r["car1"] * 100 for r in recs]
     hits = sum((t > 0) == (c > 0) for t, c in zip(tone, car) if t != 0 and c != 0)
@@ -134,7 +151,10 @@ def main(argv: list[str] | None = None) -> None:
 
     print(f"\n{len(recs)} comunicados de '{args.category}' con reacción y tono relativo "
           f"({', '.join(f'{s} {sum(r['symbol'] == s for r in recs)}' for s in sorted({r['symbol'] for r in recs}))})")
-    print(f"Tono relativo: de {min(tone):+.2f} a {max(tone):+.2f}; CAR[0,+1] de {min(car):+.1f} % a {max(car):+.1f} %\n")
+    print(f"Tono relativo: de {min(tone):+.2f} a {max(tone):+.2f}; CAR[0,+1] de {min(car):+.1f} % a {max(car):+.1f} %")
+    print(f"Tono: {'lexicón' if args.metodo == 'lexicon' else 'FinBERT'}; texto: "
+          f"{'todo el comunicado' if args.parte == 'all' else 'solo las citas entre comillas'}"
+          f"{f' ({no_part} comunicados omitidos por no tener citas)' if no_part else ''}\n")
     rho = spearman(tone, car)
     rho_abs = spearman([abs(t) for t in tone], [abs(c) for c in car])
     gap = tercile_gap(tone, car)
@@ -145,11 +165,16 @@ def main(argv: list[str] | None = None) -> None:
     print(f"{'3. CAR medio: tercio de tono más alto menos el más bajo (pp)':<62}{gap:>+12.2f}{permutation_p(tercile_gap, tone, car, args.draws):>9.4f}")
     acc = hits / calls
     print(f"{'4. signo del tono = signo del CAR (% de aciertos ± margen 95 %)':<62}{acc * 100:>8.1f} % ±{proportion_margin(acc, calls) * 100:.1f}")
+    tests = 4 * max(args.variantes, 1)
+    how = "con 4 contrastes" if args.variantes <= 1 else f"con 4 contrastes × {args.variantes} variantes ({tests} en total)"
     print(
-        "\nLectura: con 4 contrastes, un p resiste la corrección de Bonferroni solo si es menor de 0,0125."
-        f"\nCon {len(recs)} eventos, una correlación necesita rondar ±{1.96 / math.sqrt(len(recs) - 1):.2f} para ser distinguible del azar."
-        "\nEste es el baseline de tono (lexicón propio); FinBERT tendrá que mejorarlo."
+        f"\nLectura: {how}, un p resiste la corrección de Bonferroni solo si es menor de {0.05 / tests:.4f}".replace(".", ",")
+        + f".\nCon {len(recs)} eventos, una correlación necesita rondar ±{1.96 / math.sqrt(len(recs) - 1):.2f} para ser distinguible del azar."
     )
+    if args.metodo == "lexicon":
+        print("Este es el baseline de tono (lexicón propio); FinBERT tendrá que mejorarlo (--metodo finbert).")
+    else:
+        print("Compara con el lexicón sobre los mismos eventos: sin mejora clara, el modelo más complejo no se justifica.")
 
 
 if __name__ == "__main__":
