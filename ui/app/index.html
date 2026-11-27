@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TFG Mercado</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">TFG Mercado</div>
+  <nav class="tabs" role="tablist" aria-label="Secciones">
+    <button type="button" role="tab" class="tab" id="tab-market" data-tab="market" aria-selected="true" aria-controls="view-market">Mercado y eventos</button>
+    <button type="button" role="tab" class="tab" id="tab-models" data-tab="models" aria-selected="false" aria-controls="view-models">Volatilidad y modelos</button>
+    <button type="button" role="tab" class="tab" id="tab-events" data-tab="events" aria-selected="false" aria-controls="view-events">Estudio de eventos y tono</button>
+    <button type="button" role="tab" class="tab" id="tab-whatif" data-tab="whatif" aria-selected="false" aria-controls="view-whatif">Simulador ¿y si…?</button>
+  </nav>
+  <div class="topbar-right">
+    <span id="asof" class="asof"></span>
+    <span id="engine" class="badge" title="Motor del test de permutaciones (núcleo en C++ o Python)"><i class="dot"></i><span id="engine-text">Motor: …</span></span>
+    <button type="button" id="help-btn" class="btn-light">Ayuda / Metodología</button>
+  </div>
+</header>
+
+<div id="notice" class="notice" role="alert" hidden></div>
+<div id="banner" class="banner" hidden><strong>Lectura rápida</strong><span id="banner-text"></span></div>
+
+<main>
+  <section id="view-market" class="view" role="tabpanel" aria-labelledby="tab-market">
+    <div class="market-grid">
+      <div class="market-main">
+        <div class="card toolbar">
+          <div class="symbol-line"><h2 id="symbol-title">…</h2><span id="status" class="muted">cargando…</span></div>
+          <div class="pills" id="ranges" role="group" aria-label="Rango de fechas visible"></div>
+          <div class="layers">
+            <label class="toggle"><input type="checkbox" id="layer-events" checked> Eventos SEC (8-K)
+              <span class="tip" tabindex="0" role="note" aria-label="Qué es un 8-K" data-tip="Un 8-K es un aviso que una empresa cotizada presenta a la SEC cuando ocurre algo relevante: resultados, cambios de directivos, presentaciones a inversores... Pasa el ratón por cada marca para ver cuánto se movió la acción.">?</span></label>
+            <span id="event-cats" class="cats"></span>
+            <label class="toggle"><input type="checkbox" id="layer-range" checked> Rango real y previsto (HAR-E)
+              <span class="tip" tabindex="0" role="note" aria-label="Qué es el rango" data-tip="Rango = lo que se movió la acción dentro del día (del mínimo al máximo), sin importar si subió o bajó. Línea negra: rango real. Línea azul: lo que HAR-E había previsto la víspera. Puntos magenta: días de reacción a resultados.">?</span></label>
+          </div>
+          <div id="next-card" class="next-card" hidden></div>
+        </div>
+        <div class="card chart-card">
+          <div class="chart-wrap"><div id="chart"></div><div id="event-tip" class="event-tip" hidden></div></div>
+        </div>
+        <p id="chart-note" class="muted small"></p>
+      </div>
+      <aside class="card watch" id="watch" aria-label="Lista de seguimiento"></aside>
+    </div>
+  </section>
+
+  <section id="view-models" class="view" role="tabpanel" aria-labelledby="tab-models" hidden>
+    <div class="card pad">
+      <h2>Volatilidad y modelos</h2>
+      <p id="models-headline" class="big">Cargando…</p>
+      <p class="muted">Aquí irá la comparación de HAR, HAR-E y la red neuronal, por tipo de día (paso 24).</p>
+    </div>
+  </section>
+
+  <section id="view-events" class="view" role="tabpanel" aria-labelledby="tab-events" hidden>
+    <div class="card pad">
+      <h2>Estudio de eventos y tono</h2>
+      <p id="events-headline" class="big">Cargando…</p>
+      <p class="muted">Aquí irán el impacto por categoría con su veredicto de robustez, el laboratorio de permutaciones en C++ y el comparador de tono (pasos 24 y 25).</p>
+    </div>
+  </section>
+
+  <section id="view-whatif" class="view" role="tabpanel" aria-labelledby="tab-whatif" hidden>
+    <div class="card pad">
+      <h2>Simulador ¿y si…?</h2>
+      <p>Por ahora está la versión provisional: elige una acción y un tipo de evento y verás qué pasó en la historia tras eventos como ese.</p>
+      <p><a class="btn-solid" href="/prototype/whatif.html">Abrir el simulador provisional</a></p>
+      <p class="muted">El simulador definitivo (rango esperado con y sin resultados, y «¿cuán raro sería un movimiento de X %?») llega en el paso 25.</p>
+    </div>
+  </section>
+</main>
+
+<dialog id="help">
+  <h2>Ayuda y metodología</h2>
+  <dl>
+    <dt>Velas</dt><dd>Rellenas en azul: la acción cerró por encima de donde abrió. Huecas con borde magenta: cerró por debajo.</dd>
+    <dt>8-K</dt><dd>Aviso que una empresa cotizada presenta a la SEC cuando ocurre algo relevante. Se clasifican en resultados (R), divulgación a inversores (F), directivos (D) y otros.</dd>
+    <dt>CAR</dt><dd>Lo que subió o bajó la acción descontando lo que hizo el mercado general (SPY), sumado el día del evento y el siguiente.</dd>
+    <dt>Rango</dt><dd>Del mínimo al máximo del día, en tanto por uno del precio. Mide cuánto se mueve la acción, no hacia dónde.</dd>
+    <dt>HAR-E</dt><dd>Modelo que predice el rango de mañana con el de hoy, el de la semana y el del mes, y si mañana hay resultados. Es el mejor de los modelos probados.</dd>
+    <dt>Bonferroni</dt><dd>Corrección que exige un p más pequeño cuando se hacen muchos contrastes a la vez, para no tomar la casualidad por un hallazgo.</dd>
+  </dl>
+  <p class="muted small">Herramienta de estudio con datos históricos. No es asesoramiento financiero: la dirección del precio no se puede predecir con estos datos. El detalle de cada resultado está en <code>docs/entregas/resultados.md</code>.</p>
+  <form method="dialog"><button class="btn-solid">Cerrar</button></form>
+</dialog>
+
+<script src="vendor/lightweight-charts.standalone.production.js"></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -7,7 +7,8 @@ import importlib.util
 import re
 from pathlib import Path
 
-ENTREGAS = Path("docs/entregas")
+RAIZ = Path(__file__).resolve().parents[1]  # la raíz del repositorio, se lance pytest desde donde se lance
+ENTREGAS = RAIZ / "docs" / "entregas"
 ARCHIVOS = ["README.md", "resultados.md", "reproducir.md"]
 
 
@@ -36,7 +37,7 @@ def test_las_opciones_de_reproducir_existen_en_cada_modulo():
     for modulo, opciones in _comandos():
         if not modulo.startswith("backend."):  # p. ej. `python -m venv`: es de la librería estándar
             continue
-        fuente = Path(*modulo.split(".")).with_suffix(".py").read_text(encoding="utf-8")
+        fuente = (RAIZ / Path(*modulo.split("."))).with_suffix(".py").read_text(encoding="utf-8")
         for opcion in opciones:
             assert f'"{opcion}"' in fuente, f"{modulo} no define {opcion}"
 

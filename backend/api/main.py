@@ -20,12 +20,14 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 
 from backend.data.common import INTERVAL_MS
+from backend.api.app_routes import router as app_router
 from backend.data.store import load_series
 from backend.events.reactions import load_reactions, what_if
 from backend.models.volatility import forecast_vol_frame
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-UI_DIR = REPO_ROOT / "ui" / "prototype"
+UI_DIR = REPO_ROOT / "ui" / "app"
+PROTOTYPE_DIR = REPO_ROOT / "ui" / "prototype"  # versión provisional del simulador (se rehace en el paso 25)
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{1,20}$")  # evita rutas raras como "../algo"
 SOURCE_RE = re.compile(r"^[a-z0-9_]{1,40}$")
 
@@ -35,6 +37,7 @@ TF_MS = INTERVAL_MS | {"1w": 7 * DAY_MS, "1M": 30 * DAY_MS}
 POLARS_EVERY = {"1M": "1mo"}  # cómo llama Polars a cada temporalidad cuando difiere
 
 app = FastAPI(title="TFG Mercado API")
+app.include_router(app_router)
 
 
 def parquet_root() -> Path:
@@ -203,5 +206,7 @@ def whatif(symbol: str = "NVDA", category: str = "resultados", tone: str = "any"
 
 
 # La interfaz se monta la última: así /api/... tiene prioridad sobre los archivos estáticos.
+if PROTOTYPE_DIR.exists():
+    app.mount("/prototype", StaticFiles(directory=PROTOTYPE_DIR, html=True), name="prototype")
 if UI_DIR.exists():
     app.mount("/", StaticFiles(directory=UI_DIR, html=True), name="ui")

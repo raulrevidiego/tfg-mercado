@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from backend.data.alpaca import DEFAULT_SYMBOLS
@@ -38,22 +39,31 @@ def _event_line(r: dict) -> str:
     )
 
 
-def run_events(args: argparse.Namespace) -> None:
-    path = args.events or args.data_dir / "events" / "events.csv"
-    if not path.exists():
-        raise SystemExit(
-            f"\nNo existe {path}.\nCrea el archivo con las columnas symbol,datetime,category,source,note "
-            "(ver docs/events.example.csv), genera uno con `python -m backend.data.edgar` "
-            "o prueba el modo --placebo."
-        )
-    events = load_events(path)
-    market = load_series(MARKET, data_dir=args.data_dir)
+@dataclass
+class Analysis:
+    """Resultado de analizar una tabla de eventos (ver `analyze_events`)."""
+
+    analyzed: list[dict]            # un resultado por evento analizable
+    skipped: list[tuple]            # (evento, motivo) de los que no se pudieron analizar
+    kept: list[dict]                # los independientes (tras fusionar y descartar solapes)
+    n_same_day: int                 # fusionados por coincidir el mismo día en la misma acción
+    n_overlap: int                  # descartados por estar cerca de otro de mayor prioridad
+    pools: dict[str, list[float]]   # CAR de fechas al azar (placebo) por acción
+    cache: dict = field(default_factory=dict)
+
+
+def analyze_events(
+    events: list, data_dir: Path, min_gap: int, priority: list[str], placebo_n: int, seed: int
+) -> Analysis:
+    """Analiza todos los eventos (sesión de reacción, modelo de mercado, CAR), se queda con los
+    independientes y construye las fechas al azar de referencia. No imprime nada."""
+    market = load_series(MARKET, data_dir=data_dir)
     cache: dict[str, dict] = {}
     analyzed, skipped = [], []
 
     for ev in events:
         if ev.symbol not in cache:
-            cache[ev.symbol] = prepare(load_series(ev.symbol, data_dir=args.data_dir), market)
+            cache[ev.symbol] = prepare(load_series(ev.symbol, data_dir=data_dir), market)
         data = cache[ev.symbol]
         session = first_affected_session(ev.when, data["session"])
         if session is None:
@@ -68,22 +78,40 @@ def run_events(args: argparse.Namespace) -> None:
         analyzed.append(res)
 
     if not analyzed:
+        return Analysis(analyzed, skipped, [], 0, 0, {}, cache)
+    kept, n_same_day, n_overlap = select_independent_events(analyzed, min_gap, priority)
+    # Las fechas al azar nunca caen cerca de NINGÚN evento real, se conserve o no.
+    pools = {}
+    for sym, data in cache.items():
+        mine = [r["idx"] for r in analyzed if r["symbol"] == sym]
+        pools[sym] = [p["car1"] for p in placebo_pool(data, placebo_n, mine, seed)]
+    return Analysis(analyzed, skipped, kept, n_same_day, n_overlap, pools, cache)
+
+
+def run_events(args: argparse.Namespace) -> None:
+    path = args.events or args.data_dir / "events" / "events.csv"
+    if not path.exists():
+        raise SystemExit(
+            f"\nNo existe {path}.\nCrea el archivo con las columnas symbol,datetime,category,source,note "
+            "(ver docs/events.example.csv), genera uno con `python -m backend.data.edgar` "
+            "o prueba el modo --placebo."
+        )
+    events = load_events(path)
+    priority = [c.strip().lower() for c in args.prioridad.split(",") if c.strip()]
+    analysis = analyze_events(events, args.data_dir, args.min_gap, priority, args.placebo_n, args.seed)
+    analyzed, skipped, kept = analysis.analyzed, analysis.skipped, analysis.kept
+    n_same_day, n_overlap, pools = analysis.n_same_day, analysis.n_overlap, analysis.pools
+
+    if not analyzed:
         raise SystemExit("\nNingún evento se pudo analizar:\n" + "\n".join(
             f"  {e.symbol} {e.when:%Y-%m-%d}: {why}" for e, why in skipped))
 
-    priority = [c.strip().lower() for c in args.prioridad.split(",") if c.strip()]
-    kept, n_same_day, n_overlap = select_independent_events(analyzed, args.min_gap, priority)
     print(f"\n{len(analyzed)} eventos analizados ({len(skipped)} omitidos por falta de datos)")
     print(
         f"→ {len(kept)} independientes: {n_same_day} fusionados por coincidir el mismo día en la misma acción y "
         f"{n_overlap} descartados por estar a menos de {args.min_gap} sesiones de otro de mayor prioridad"
     )
 
-    # Las fechas al azar nunca caen cerca de NINGÚN evento real, se conserve o no.
-    pools = {}
-    for sym, data in cache.items():
-        mine = [r["idx"] for r in analyzed if r["symbol"] == sym]
-        pools[sym] = [p["car1"] for p in placebo_pool(data, args.placebo_n, mine, args.seed)]
     rows = summarize([r for r in kept if pools.get(r["symbol"])], pools, args.draws, args.seed, args.motor)
 
     print("\nResumen por categoría. CAR = retorno que el mercado (SPY) no explica, día del evento + siguiente.")

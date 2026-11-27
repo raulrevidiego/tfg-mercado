@@ -169,5 +169,5 @@ def test_errores_de_la_api(client, tmp_path, monkeypatch):
 
 
 def test_la_pagina_de_whatif_se_sirve_y_se_enlaza(client):
-    assert "¿Y si" in client.get("/whatif.html").text
-    assert 'href="whatif.html"' in client.get("/").text
+    assert "¿Y si" in client.get("/prototype/whatif.html").text  # versión provisional, hasta el paso 25
+    assert 'href="/prototype/whatif.html"' in client.get("/").text

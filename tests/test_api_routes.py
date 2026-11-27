@@ -15,7 +15,7 @@ def test_ninguna_ruta_esta_repetida():
 
 
 def test_el_modulo_de_la_api_no_repite_definiciones_ni_imports():
-    arbol = ast.parse(Path("backend/api/main.py").read_text(encoding="utf-8"))
+    arbol = ast.parse((Path(__file__).resolve().parents[1] / "backend" / "api" / "main.py").read_text(encoding="utf-8"))
     nombres = Counter(n.name for n in arbol.body if isinstance(n, (ast.FunctionDef, ast.ClassDef)))
     imports = Counter(ast.unparse(n) for n in arbol.body if isinstance(n, (ast.Import, ast.ImportFrom)))
     assert [k for k, v in nombres.items() if v > 1] == []

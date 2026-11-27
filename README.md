@@ -226,3 +226,48 @@ El veredicto es mecánico (convenciones, no una regla estadística): **frágil**
 **robusta con excepciones** = aguanta, pero hay acciones sin efecto (con 3 o más eventos, cociente < 1,1; con 10 o más, además, p ≥ 0,05 en solitario);
 **robusta** = aguanta y sin excepciones.
 Con `--motor python` y 200.000 remuestreos tarda mucho (unas 10 permutaciones por categoría): usa `--motor cpp`.
+
+## Datos precalculados de la interfaz (paso 22)
+
+La interfaz no calcula nada pesado: lee unos JSON pequeños que se generan una sola vez a partir de lo ya descargado y de
+los modelos del proyecto. Es la base de las pantallas de los pasos siguientes.
+
+```bash
+python -m backend.app.build                    # escribe data/app/*.json (con C++: 200.000 remuestreos; sin él, 20.000)
+uvicorn backend.api.main:app                   # y la API los sirve en /api/app/*
+pytest tests/test_app_build.py tests/test_app_api.py
+```
+
+| Archivo | Qué contiene | Ruta de la API |
+|---|---|---|
+| `meta.json` | fecha de los datos, acciones, motor, remuestreos y semilla | `/api/app/meta` (y `/api/app/engine`: el motor disponible ahora) |
+| `events.json` | reacción (CAR) de cada evento independiente, por acción | `/api/app/events?symbol=NVDA&categories=resultados` |
+| `events_summary.json` | por categoría: p, veredicto de robustez, insignia y lectura rápida | `/api/app/events-summary` |
+| `volatility.json` | rango real y previsto (HAR, HAR-E, red) día a día y rango esperado de la siguiente sesión | `/api/app/volatility?symbol=NVDA` |
+| `models.json` | MAE y QLIKE de cada modelo frente a HAR-E, con margen, y lectura rápida | `/api/app/models` |
+
+- Los textos de «lectura rápida» y las insignias se generan desde los números: si cambian los datos, cambian con ellos.
+- La red neuronal aparece solo si existe `data/models/nn_predictions.parquet` (`python -m backend.training.evaluate_nn`).
+- El rango esperado de la siguiente sesión se ofrece con y sin resultados mañana (HAR-E ajustado con todos los datos). Es el rango
+  del día (máximo menos mínimo), no un intervalo de precio: la dirección no se predice.
+- `data/app/` no se sube a git. Hay que volver a ejecutar `python -m backend.app.build` si se actualizan los datos o los modelos.
+
+## Interfaz nueva (paso 23)
+
+La interfaz (`ui/app/`) sustituye al prototipo. Se sirve desde la misma API y funciona sin conexión a internet (la librería de
+gráficos va incluida en `ui/app/vendor/`, licencia Apache 2.0).
+
+```bash
+python -m backend.app.build                    # una vez (y tras actualizar datos o modelos): genera data/app/*.json
+uvicorn backend.api.main:app                   # abre http://127.0.0.1:8000
+```
+
+- **Cuatro pestañas:** Mercado y eventos (hecha), Volatilidad y modelos, Estudio de eventos y tono y Simulador ¿y si…? (las tres últimas
+  muestran por ahora su «lectura rápida»; se completan en los pasos 24 y 25). El simulador provisional del prototipo sigue en `/prototype/whatif.html`.
+- **Mercado y eventos:** velas (alcistas rellenas en azul, bajistas huecas con borde magenta: se distinguen también en blanco y negro),
+  eventos 8-K como marcas grises con su reacción al pasar el ratón, panel de rango real y previsto por HAR-E bajo las velas y rango esperado de
+  la siguiente sesión con y sin resultados. Arranca en NVDA. BTCUSDT va aparte como banco de pruebas.
+- **Textos desde los datos:** la lectura rápida de cada pantalla sale de los JSON, no está escrita a mano.
+- **Código:** la lógica sin DOM (formatos, marcadores, series de rango, textos) está en `ui/app/js/{format,events,range}.js` y se prueba con
+  `cd ui/app && node --test tests/*.test.js` (Node 20 o superior; `pytest tests/test_ui.py` lo ejecuta si Node está instalado).
+- La paleta está en `css/app.css` y `js/theme.js` (un test comprueba que coinciden). Todos los textos sobre el fondo cumplen el contraste AA (mínimo 4,5:1).

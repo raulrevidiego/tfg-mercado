@@ -1,0 +1,6 @@
+{
+  "name": "tfg-mercado-ui",
+  "private": true,
+  "type": "module",
+  "description": "Interfaz del TFG. package.json solo para que Node trate los módulos como ESM en los tests (node --test ui/app/tests); el navegador no lo usa."
+}
